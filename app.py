@@ -1,24 +1,53 @@
-
 import google.generativeai as genai
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
-import argparse
+from google.generativeai.errors import APIError
 
-if "GOOGLE_API_KEY" not in os.environ:
-    print("Please set the GOOGLE_API_KEY environment variable.")
-    exit()
+# --- Configuration and Initialization ---
 
-genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-model = genai.GenerativeModel('gemini-2.5-flash')
+# Azure App Service will securely provide the API key via Application Settings.
+API_KEY = os.environ.get("GOOGLE_API_KEY")
 
+# Hardcoded model name as requested
+MODEL_TO_USE = 'gemini-2.5-flash' 
+
+if not API_KEY:
+    # In a cloud environment, print a fatal message and allow the host 
+    # (like Gunicorn/Azure) to handle the startup failure.
+    print("FATAL: GOOGLE_API_KEY environment variable not found. The application cannot start.")
+
+try:
+    # Only configure if the key is available to avoid runtime errors on startup
+    if API_KEY:
+        genai.configure(api_key=API_KEY)
+        # The GenerativeModel instance now explicitly uses gemini-2.5-flash
+        model = genai.GenerativeModel(MODEL_TO_USE)
+    else:
+        # Create a placeholder object or handle startup failure gracefully
+        model = None 
+except Exception as e:
+    # Handle configuration failure if key is present but invalid
+    print(f"ERROR: Failed to configure Google Generative AI: {e}")
+    model = None
+
+# Initialize Flask app
+# The name must be 'app' for Azure/Gunicorn to easily find it.
 app = Flask(__name__)
-CORS(app)
 
-def execute_will_i_regret_buying(query):
+# Configure CORS
+# In production, replace "*" with your specific front-end origin(s)
+CORS(app, resources={r"/api/*": {"origins": "*", "supports_credentials": True}})
+
+# --- Core LLM Logic ---
+
+def execute_will_i_regret_buying(query: str):
     """
-    Skill: Will I regret buying this
+    Skill: Will I regret buying this - Generates the regret analysis using the Gemini API.
     """
+    if not model:
+        raise Exception("AI model failed to initialize due to missing or invalid API key.")
+
     prompt = f"""
 You are a smart shopping assistant.
 
@@ -44,26 +73,60 @@ Return in readable, structured format.
 """
     response = model.generate_content(prompt)
     return response.text
-    
+
+# --- Health Check Route ---
+
 @app.route('/check', methods=['GET'])
 def check():
     """
     Simple health check route used to confirm the backend server is running and accessible.
     """
-    return "backend is running"
+    status_code = 200
+    if not model:
+        # Return a warning status if the model failed to initialize
+        status_code = 503
+        message = "backend is running, but AI model failed to initialize."
+    else:
+        message = "backend is running"
+
+    return jsonify({
+        'status': 'ok' if status_code == 200 else 'error', 
+        'message': message, 
+        'model': MODEL_TO_USE
+    }), status_code
+
+# --- Main API Route ---
 
 @app.route('/api/execute', methods=['POST'])
 def execute():
-    data = request.get_json()
-    query = data.get('query', '')
-    try:
-        result = execute_will_i_regret_buying(query)
-        return jsonify({'success': True, 'result': result})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    # 1. Basic Input Validation and Parsing
+    if not model:
+        # Fail fast if the model isn't configured
+        return jsonify({'error': 'AI service not initialized. Check API key configuration.'}), 503
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Run the will_i_regret_buying agent as a Flask app.")
-    parser.add_argument("--port", type=int, default=5008, help="Port to run the Flask app on.")
-    args = parser.parse_args()
-    app.run(port=args.port)
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({'error': 'Invalid or missing JSON payload.'}), 400
+
+    query = data.get('query')
+    # Validate that query is a non-empty string
+    if not query or not isinstance(query, str) or not query.strip():
+        return jsonify({'error': 'Missing or empty "query" field in the request.'}), 400
+    
+    # 2. Execution and Specific Error Handling
+    try:
+        # Call the core logic
+        result = execute_will_i_regret_buying(query)
+        
+        return jsonify({'success': True, 'result': result})
+        
+    except APIError as e:
+        # Handle specific Gemini API errors (e.g., rate limits, invalid prompts)
+        print(f"Gemini API Error: {e}")
+        # Use a 503 Service Unavailable or 500 Internal Server Error
+        return jsonify({'error': f'AI Service Unavailable or request error: {e}'}), 503
+        
+    except Exception as e:
+        # Catch all other unexpected errors (e.g., network, internal logic)
+        print(f"Internal Server Error: {e}")
+        return jsonify({'error': 'An unexpected internal server error occurred.'}), 500
