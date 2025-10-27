@@ -44,6 +44,13 @@ Return in readable, structured format.
 """
     response = model.generate_content(prompt)
     return response.text
+    
+@app.route('/check', methods=['GET'])
+def check():
+    """
+    Simple health check route used to confirm the backend server is running and accessible.
+    """
+    return jsonify({'status': 'ok', 'message': 'backend is running', 'model': MODEL_TO_USE}), 200
 
 @app.route('/api/execute', methods=['POST'])
 def execute():
