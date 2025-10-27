@@ -45,7 +45,7 @@ Return in readable, structured format.
     response = model.generate_content(prompt)
     return response.text
     
-@app.route('/check', methods=['POST'])
+@app.route('/check', methods=['GET'])
 def check():
     """
     Simple health check route used to confirm the backend server is running and accessible.
