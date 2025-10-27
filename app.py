@@ -10,7 +10,7 @@ if "GOOGLE_API_KEY" not in os.environ:
     exit()
 
 genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-2.5-flash')
 
 app = Flask(__name__)
 CORS(app)
@@ -45,12 +45,12 @@ Return in readable, structured format.
     response = model.generate_content(prompt)
     return response.text
     
-@app.route('/check', methods=['GET'])
+@app.route('/check', methods=['POST'])
 def check():
     """
     Simple health check route used to confirm the backend server is running and accessible.
     """
-    return jsonify({'status': 'ok', 'message': 'backend is running', 'model': MODEL_TO_USE}), 200
+    return "backend is running"
 
 @app.route('/api/execute', methods=['POST'])
 def execute():
